@@ -1,10 +1,33 @@
 # zellij-pane-tracker
 
-A Zellij plugin that exports pane names to `/tmp/zj-pane-names.json` for shell script integration.
+A Zellij plugin that automatically captures pane content and exports pane metadata to JSON files for shell script integration.
 
 ## What It Does
 
-This plugin runs in the background and maintains a JSON file mapping pane IDs to their current names:
+This plugin runs in the background and provides automatic pane tracking:
+
+### 1. Auto-Capture Pane Content
+
+Automatically dumps all terminal pane content to `/tmp/zj-pane-N.txt` files whenever panes update:
+
+```bash
+/tmp/zj-pane-1.txt  # Content of terminal pane 1
+/tmp/zj-pane-3.txt  # Content of terminal pane 3
+/tmp/zj-pane-5.txt  # Content of terminal pane 5
+```
+
+### 2. Named Pane Symlinks
+
+Creates named symlinks for custom-named panes:
+
+```bash
+/tmp/zj-opencode.txt  → /tmp/zj-pane-1.txt
+/tmp/zj-build.txt     → /tmp/zj-pane-5.txt
+```
+
+### 3. Pane Names Export
+
+Maintains a JSON file mapping pane IDs to their current names:
 
 ```json
 {
@@ -17,7 +40,24 @@ This plugin runs in the background and maintains a JSON file mapping pane IDs to
 }
 ```
 
-This allows shell scripts (like `zjall`) to automatically use named panes when capturing output.
+### 4. Pane Metadata Export
+
+Press `Ctrl-g` then `c` to capture full pane metadata to `/tmp/zj-panes-info.json`:
+
+```json
+[
+  {
+    "pane_id": "terminal_1",
+    "name": "opencode",
+    "command": "docker mcp gateway run",
+    "is_focused": true,
+    "is_floating": false,
+    "coordinates": "120x40 at (0,0)"
+  }
+]
+```
+
+This eliminates the need to manually run `zjall` - content is always captured!
 
 ## Building
 
@@ -80,17 +120,29 @@ plugins {
 }
 ```
 
-## Integration with zjall
+## Keybindings
 
-The `zjall` function can be enhanced to read `/tmp/zj-pane-names.json` and create named symlinks:
+- **Ctrl-g + c**: Manually trigger full pane capture with metadata export
+
+## Integration with Shell Scripts
+
+Since pane content is automatically captured, you can:
 
 ```bash
-# After zjall runs, you'll have both:
-# /tmp/zj-pane-3.txt          # Numeric pane file
-# /tmp/zj-build.txt           # Named symlink (if pane 3 is named "build")
+# Read any pane's content directly
+cat /tmp/zj-pane-3.txt
+
+# Or use named panes
+cat /tmp/zj-opencode.txt
+
+# Get pane metadata
+jq '.[] | select(.name == "build")' /tmp/zj-panes-info.json
+
+# Get pane names
+jq '.panes' /tmp/zj-pane-names.json
 ```
 
-See `~/.config/zsh/conf.d/10-aliases.zsh` for the updated `zjall` implementation.
+The `zjall` function is now optional - content is always available!
 
 ## How It Works
 
