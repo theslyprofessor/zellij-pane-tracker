@@ -1,66 +1,89 @@
 # Reddit r/zellij Post
 
-**Title:** Plugin: zellij-pane-tracker - Export pane metadata to JSON for AI assistants and scripts
+**Title:** Plugin + MCP Server: Let AI assistants see and control your Zellij panes
 
 ---
 
-I built a simple plugin that exports pane metadata to a JSON file, so external tools (like AI coding assistants) can see what's happening in your Zellij session.
+I built a plugin that lets AI coding assistants (Claude, GPT, Cursor, OpenCode, etc.) actually see what's happening in your other terminal panes.
 
-**The problem:** I use an AI coding assistant (Claude via OpenCode) in one terminal pane, but it has no idea what's running in my other panes - build output, test results, file manager, etc. It can't "look over" at another pane.
+**The problem:** My AI assistant runs in one pane but has no idea what's in my build output, test results, or file manager. It can't "look over" at another pane.
 
-**The solution:** This plugin continuously exports pane info to `/tmp/zj-pane-names.json`:
+**The solution:** Two components that work together:
 
-```json
-{
-  "panes": {
-    "terminal_0": "Yazi: ~/projects",
-    "terminal_1": "opencode", 
-    "terminal_2": "npm run build",
-    "plugin_0": "zellij:tab-bar"
-  },
-  "timestamp": 1733600000
-}
+1. **Zellij Plugin** - Exports pane metadata to `/tmp/zj-pane-names.json`
+2. **MCP Server** - Gives AI assistants tools to read panes, run commands, create panes
+
+Now my AI assistant can:
+- List all panes and their names
+- Read full scrollback from any pane ("what's the build error in pane 2?")
+- Run commands in other panes
+- Create new panes
+
+**Example interaction:**
 ```
-
-Now my AI assistant can read this file and know which panes exist and what they're named. Combined with `zellij action dump-screen`, it can actually see the content of other panes when needed.
+Me: "Check the build output in pane 2"
+AI: [uses dump_pane tool] "I see a TypeScript error on line 42..."
+```
 
 **GitHub:** https://github.com/theslyprofessor/zellij-pane-tracker
 
-It's my first Zellij plugin - learned a lot about the WASI sandbox and plugin APIs. Happy to hear feedback or suggestions!
+Works with any MCP-compatible tool (OpenCode, Claude Desktop, etc.) or you can just use the plugin + shell scripts standalone.
+
+First Zellij plugin - feedback welcome!
 
 ---
 
-# Alternative: Shorter Version
+# Shorter Version (for Discord/quick posts)
 
-**Title:** Made a plugin to help AI assistants "see" other panes
+**[Plugin] zellij-pane-tracker - AI assistant pane integration**
 
-Built `zellij-pane-tracker` - it exports pane metadata to JSON so external tools can know what's running in your session.
+Made a plugin + MCP server that lets AI coding assistants see and interact with your Zellij panes.
 
-Use case: AI coding assistant in pane 1 can now know pane 2 is running `npm run build` and pane 3 has `nvim main.rs` open.
+Your AI can now:
+- Know what panes exist (`get_panes`)
+- Read pane content (`dump_pane`) 
+- Run commands in other panes (`run_in_pane`)
+- Create new panes (`new_pane`)
 
-GitHub: https://github.com/theslyprofessor/zellij-pane-tracker
+Use case: AI in pane 1 asks "what's the build error?" and reads pane 2's output directly.
 
-First plugin, feedback welcome!
-
----
-
-# Discord/Forum Alternative
-
-**[Plugin] zellij-pane-tracker - Pane metadata export for external tools**
-
-Hey all! Just finished my first Zellij plugin and wanted to share.
-
-**What it does:** Exports pane names/IDs to `/tmp/zj-pane-names.json` on every pane update.
-
-**Why:** I wanted my AI coding assistant (running in one pane) to be able to "see" what's happening in other panes - build output, file managers, editors, etc.
-
-**How it works:**
-1. Subscribes to `PaneUpdate` events
-2. Extracts pane metadata from `PaneManifest`
-3. Writes JSON via shell command (WASI sandbox workaround)
-
-Combined with `zellij action dump-screen`, external tools can now both *know about* and *read* other panes.
+Works with MCP-compatible tools (OpenCode, Claude Desktop) or standalone with shell scripts.
 
 Repo: https://github.com/theslyprofessor/zellij-pane-tracker
 
-Would love feedback! This was a fun learning experience with the plugin APIs.
+---
+
+# HN/Longer Form
+
+**Show HN: Zellij plugin that lets AI assistants see your other terminal panes**
+
+I've been using AI coding assistants in my terminal, but they're frustratingly blind to context. The AI runs in pane 1, my build is failing in pane 2, and I have to copy-paste errors back and forth.
+
+So I built zellij-pane-tracker:
+
+1. A Zellij plugin that exports pane metadata to JSON
+2. An MCP server that exposes pane operations to AI tools
+3. A shell script (zjdump) that captures pane content
+
+Now when I ask "what's the build error?", my AI assistant can actually look at the build pane and tell me.
+
+**How it works:**
+- Plugin subscribes to Zellij's PaneUpdate events
+- Writes pane names/IDs to /tmp/zj-pane-names.json
+- MCP server reads this + uses zjdump to capture content
+- AI tools call the MCP server via standard protocol
+
+**MCP tools exposed:**
+- `get_panes` - List all panes
+- `dump_pane` - Read any pane's full scrollback
+- `run_in_pane` - Execute commands in other panes
+- `new_pane` - Create panes
+- `rename_session` - Rename Zellij session
+
+Works with OpenCode, Claude Desktop, or any MCP-compatible tool. Also works standalone without MCP if you just want the shell scripts.
+
+GitHub: https://github.com/theslyprofessor/zellij-pane-tracker
+
+This was my first Zellij plugin. The WASI sandbox made file I/O interesting (had to shell out to write JSON), but the plugin API is well-designed.
+
+Feedback welcome!

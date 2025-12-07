@@ -5,6 +5,7 @@ import { z } from "zod";
 import { $ } from "bun";
 
 const PANE_JSON_PATH = "/tmp/zj-pane-names.json";
+const ZJDUMP_PATH = `${process.env.HOME}/zjdump`;
 
 interface PaneInfo {
   panes: Record<string, string>;
@@ -24,25 +25,10 @@ async function getPaneMetadata(): Promise<PaneInfo | null> {
   return null;
 }
 
-// Helper to check if we're in Zellij
-async function inZellij(): Promise<boolean> {
-  return !!process.env.ZELLIJ;
-}
-
-// Helper to run zellij action
-async function zellijAction(...args: string[]): Promise<string> {
-  try {
-    const result = await $`zellij action ${args}`.text();
-    return result.trim();
-  } catch (e: any) {
-    return `Error: ${e.message}`;
-  }
-}
-
 // Create MCP server
 const server = new McpServer({
   name: "zellij-pane-mcp",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
 // Tool: get_panes - List all panes with their names
@@ -69,134 +55,36 @@ server.tool(
       .map(([id, name]) => `${id}: ${name || "(unnamed)"}`)
       .join("\n");
 
-    const pluginPanes = Object.entries(metadata.panes)
-      .filter(([id]) => id.startsWith("plugin_"))
-      .map(([id, name]) => `${id}: ${name}`)
-      .join("\n");
-
     return {
       content: [
         {
           type: "text",
-          text: `Terminal Panes:\n${terminalPanes}\n\nPlugin Panes:\n${pluginPanes}\n\nTimestamp: ${new Date(metadata.timestamp * 1000).toISOString()}`,
+          text: `Terminal Panes:\n${terminalPanes}\n\nTimestamp: ${new Date(metadata.timestamp * 1000).toISOString()}`,
         },
       ],
     };
   }
 );
 
-// Tool: dump_pane - Get content of a specific pane
+// Tool: dump_pane - Get content of a specific pane using ~/zjdump
 server.tool(
   "dump_pane",
-  "Dump the visible content of a specific terminal pane",
+  "Dump the full scrollback content of a specific terminal pane. Can use terminal ID (e.g., '2' or 'terminal_2') or display name (e.g., 'Pane #2', 'opencode').",
   {
     pane_id: z
       .string()
-      .describe("Pane ID (e.g., 'terminal_2' or just '2')"),
+      .describe("Pane identifier - terminal ID (e.g., '2', 'terminal_2') or display name (e.g., 'Pane #2', 'opencode')"),
   },
   async ({ pane_id }) => {
-    // Normalize pane_id
-    const normalizedId = pane_id.startsWith("terminal_")
-      ? pane_id
-      : `terminal_${pane_id}`;
-    const paneNum = normalizedId.replace("terminal_", "");
-
-    const dumpFile = `/tmp/zjd-${paneNum}.txt`;
-
     try {
-      // Use the zjdump approach: dump-screen to file
-      await $`zellij action dump-screen -p ${normalizedId} ${dumpFile}`.quiet();
-
-      const file = Bun.file(dumpFile);
-      if (await file.exists()) {
-        const content = await file.text();
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Content of ${normalizedId}:\n\n${content}`,
-            },
-          ],
-        };
-      }
-    } catch (e: any) {
-      // Fallback: try alternative dump method
-      try {
-        const result =
-          await $`zellij action dump-screen -p ${normalizedId}`.text();
-        return {
-          content: [{ type: "text", text: `Content of ${normalizedId}:\n\n${result}` }],
-        };
-      } catch (e2: any) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to dump pane ${normalizedId}: ${e2.message}. Make sure the pane exists and you're in Zellij.`,
-            },
-          ],
-        };
-      }
-    }
-
-    return {
-      content: [{ type: "text", text: `No content found for ${normalizedId}` }],
-    };
-  }
-);
-
-// Tool: focus_pane - Switch focus to a pane
-server.tool(
-  "focus_pane",
-  "Focus/switch to a specific pane",
-  {
-    pane_id: z
-      .string()
-      .describe("Pane ID (e.g., 'terminal_2' or just '2')"),
-  },
-  async ({ pane_id }) => {
-    const normalizedId = pane_id.startsWith("terminal_")
-      ? pane_id
-      : `terminal_${pane_id}`;
-
-    try {
-      await $`zellij action focus-pane -p ${normalizedId}`.quiet();
-      return {
-        content: [{ type: "text", text: `Focused on ${normalizedId}` }],
-      };
-    } catch (e: any) {
+      // Use ~/zjdump which handles all the complexity of finding and dumping panes
+      const result = await $`${ZJDUMP_PATH} ${pane_id}`.text();
       return {
         content: [
-          { type: "text", text: `Failed to focus ${normalizedId}: ${e.message}` },
-        ],
-      };
-    }
-  }
-);
-
-// Tool: send_keys - Send keystrokes to a pane
-server.tool(
-  "send_keys",
-  "Send keystrokes to a specific pane (runs command if ending with Enter)",
-  {
-    pane_id: z
-      .string()
-      .describe("Pane ID (e.g., 'terminal_2' or just '2')"),
-    keys: z
-      .string()
-      .describe("Keys to send (use \\n for Enter, or end with \\n to execute)"),
-  },
-  async ({ pane_id, keys }) => {
-    const normalizedId = pane_id.startsWith("terminal_")
-      ? pane_id
-      : `terminal_${pane_id}`;
-
-    try {
-      // Write keys using zellij action write
-      await $`zellij action write-chars -p ${normalizedId} ${keys}`.quiet();
-      return {
-        content: [
-          { type: "text", text: `Sent keys to ${normalizedId}: "${keys}"` },
+          {
+            type: "text",
+            text: result,
+          },
         ],
       };
     } catch (e: any) {
@@ -204,7 +92,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Failed to send keys to ${normalizedId}: ${e.message}`,
+            text: `Failed to dump pane '${pane_id}': ${e.message}\n\nMake sure:\n1. You're running inside a Zellij session\n2. The pane-tracker plugin is running\n3. ~/zjdump exists and is executable`,
           },
         ],
       };
@@ -213,29 +101,25 @@ server.tool(
 );
 
 // Tool: run_in_pane - Run a command in a specific pane
+// Note: This uses zjexec shell function approach
 server.tool(
   "run_in_pane",
-  "Run a shell command in a specific pane",
+  "Run a shell command in a specific pane (by cycling to it, running command, returning)",
   {
     pane_id: z
       .string()
-      .describe("Pane ID (e.g., 'terminal_2' or just '2')"),
+      .describe("Pane identifier - terminal ID (e.g., '2') or display name"),
     command: z.string().describe("Command to run"),
   },
   async ({ pane_id, command }) => {
-    const normalizedId = pane_id.startsWith("terminal_")
-      ? pane_id
-      : `terminal_${pane_id}`;
-
     try {
-      // Write command and press enter
-      await $`zellij action write-chars -p ${normalizedId} ${command}`.quiet();
-      await $`zellij action write -p ${normalizedId} 10`.quiet(); // 10 = Enter key
+      // Use zjexec approach: source zshrc to get the function, then call it
+      const result = await $`zsh -c 'source ~/.zshrc && zjexec ${pane_id} "${command}"'`.text();
       return {
         content: [
           {
             type: "text",
-            text: `Executed in ${normalizedId}: ${command}`,
+            text: result || `Executed in pane ${pane_id}: ${command}`,
           },
         ],
       };
@@ -244,7 +128,7 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Failed to run command in ${normalizedId}: ${e.message}`,
+            text: `Failed to run command in pane ${pane_id}: ${e.message}`,
           },
         ],
       };
@@ -289,11 +173,32 @@ server.tool(
   }
 );
 
+// Tool: rename_session - Rename current Zellij session
+server.tool(
+  "rename_session",
+  "Rename the current Zellij session",
+  {
+    name: z.string().describe("New session name"),
+  },
+  async ({ name }) => {
+    try {
+      await $`zsh -c 'source ~/.zshrc && zjrename ${name}'`.quiet();
+      return {
+        content: [{ type: "text", text: `Session renamed to: ${name}` }],
+      };
+    } catch (e: any) {
+      return {
+        content: [{ type: "text", text: `Failed to rename session: ${e.message}` }],
+      };
+    }
+  }
+);
+
 // Start server
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Zellij Pane MCP server running on stdio");
+  console.error("Zellij Pane MCP server v0.2.0 running on stdio");
 }
 
 main().catch(console.error);

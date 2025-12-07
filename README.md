@@ -1,46 +1,34 @@
 # zellij-pane-tracker
 
-A Zellij plugin that exports pane metadata to JSON for AI assistants, shell scripts, and automation.
+A Zellij plugin + MCP server that lets AI assistants see and interact with your terminal panes.
 
-## Why?
+## The Problem
 
-AI coding assistants (like Claude, GPT, etc.) running in a terminal pane can't see what's happening in other panes. This plugin solves that by continuously exporting pane metadata to a JSON file that any tool can read.
+AI coding assistants (Claude, GPT, Cursor, etc.) running in a terminal pane are blind to other panes. They can't see your build output, test results, or what's running in your file manager.
 
-**Use cases:**
-- Let your AI assistant know what's running in your build/test pane
-- Script automation that needs to know which panes exist
-- Monitor pane states from external tools
+## The Solution
 
-## What It Does
+This project has two components:
 
-The plugin runs in the background and exports pane metadata to `/tmp/zj-pane-names.json`:
+1. **Zellij Plugin** - Exports pane metadata to JSON (`/tmp/zj-pane-names.json`)
+2. **MCP Server** - Exposes pane operations to AI assistants via [Model Context Protocol](https://modelcontextprotocol.io/)
 
-```json
-{
-  "panes": {
-    "terminal_0": "Yazi: ~/projects",
-    "terminal_1": "opencode",
-    "terminal_2": "Pane #1",
-    "terminal_3": "nvim main.rs",
-    "plugin_0": "zellij:tab-bar",
-    "plugin_1": "zellij:status-bar"
-  },
-  "timestamp": 1733600000
-}
-```
+Together, they let your AI assistant:
+- Know what panes exist and what they're named
+- Read the full scrollback content of any pane
+- Run commands in other panes
+- Create new panes
+- Rename sessions
 
-Updates automatically whenever panes change (new pane, renamed, closed, etc.).
+## Quick Start
 
-## Installation
-
-### 1. Build the plugin
+### 1. Build and Install the Plugin
 
 ```bash
-# Clone the repo
 git clone https://github.com/theslyprofessor/zellij-pane-tracker
 cd zellij-pane-tracker
 
-# Build (requires Rust with wasm32-wasip1 target)
+# Build (requires Rust)
 rustup target add wasm32-wasip1
 cargo build --release
 
@@ -49,9 +37,9 @@ mkdir -p ~/.config/zellij/plugins
 cp target/wasm32-wasip1/release/zellij-pane-tracker.wasm ~/.config/zellij/plugins/
 ```
 
-### 2. Configure auto-load
+### 2. Configure Auto-Load
 
-Add to your `~/.config/zellij/config.kdl`:
+Add to `~/.config/zellij/config.kdl`:
 
 ```kdl
 load_plugins {
@@ -59,79 +47,124 @@ load_plugins {
 }
 ```
 
-### 3. Grant permissions
+On first load, Zellij prompts for permissions. Press `y` to allow.
 
-On first load, Zellij will prompt for permissions. Press `y` to allow:
-- Read application state (to see pane info)
-- Run commands (to write JSON file)
+### 3. Install the zjdump Script
 
-## Usage
+```bash
+cp scripts/zjdump ~/zjdump  # or anywhere in your PATH
+chmod +x ~/zjdump
+```
 
-### Reading pane metadata
+### 4. Set Up MCP Server (Optional)
+
+If your AI tool supports MCP (like [OpenCode](https://opencode.ai), Claude Desktop, etc.):
+
+```bash
+cd mcp-server
+bun install
+```
+
+Add to your MCP config (e.g., `~/.config/opencode/opencode.json`):
+
+```json
+{
+  "mcp": {
+    "zellij": {
+      "type": "local",
+      "command": ["bun", "run", "/path/to/zellij-pane-tracker/mcp-server/index.ts"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Restart your AI tool. It now has these capabilities:
+- `get_panes` - List all panes with IDs and names
+- `dump_pane` - Get full scrollback of any pane
+- `run_in_pane` - Execute commands in other panes
+- `new_pane` - Create panes
+- `rename_session` - Rename the Zellij session
+
+## How It Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Zellij Session                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │ terminal_1  │  │ terminal_2  │  │ terminal_3  │         │
+│  │  opencode   │  │  npm build  │  │    nvim     │         │
+│  └─────────────┘  └─────────────┘  └─────────────┘         │
+│         │                                                   │
+│         │ MCP protocol                                      │
+│         ▼                                                   │
+│  ┌─────────────────────┐      ┌──────────────────────────┐ │
+│  │    MCP Server       │      │   pane-tracker plugin    │ │
+│  │  (bun run index.ts) │◄────►│  (writes pane metadata)  │ │
+│  └─────────────────────┘      └──────────────────────────┘ │
+│         │                              │                    │
+│         │ calls                        │ writes             │
+│         ▼                              ▼                    │
+│  ┌─────────────┐              ┌──────────────────────────┐ │
+│  │  ~/zjdump   │              │ /tmp/zj-pane-names.json  │ │
+│  │  (script)   │              │   { panes: {...} }       │ │
+│  └─────────────┘              └──────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+1. **Plugin** subscribes to Zellij's `PaneUpdate` events
+2. On each update, writes pane metadata to `/tmp/zj-pane-names.json`
+3. **MCP Server** reads this JSON to answer `get_panes` requests
+4. **zjdump** script navigates to a pane, captures content, returns to origin
+
+## Usage Without MCP
+
+You can use the plugin and zjdump script directly without the MCP server:
 
 ```bash
 # See all panes
 cat /tmp/zj-pane-names.json
 
-# Get specific pane name with jq
-jq '.panes.terminal_2' /tmp/zj-pane-names.json
-
-# List only terminal panes
-jq '.panes | to_entries[] | select(.key | startswith("terminal_"))' /tmp/zj-pane-names.json
+# Dump a pane's content
+~/zjdump 2              # by terminal ID
+~/zjdump "Pane #2"      # by display name
+~/zjdump                # current pane
 ```
 
-### Dumping pane content (companion script)
+### JSON Output
 
-The plugin exports metadata, but to capture actual pane *content*, use this shell function:
-
-```bash
-# Add to your .zshrc or .bashrc
-zjdump() {
-    [[ -z "$ZELLIJ" ]] && { echo "Not in Zellij"; return 1; }
-    local n="${1:-0}"; [[ "$1" =~ ^terminal_ ]] && n="${1#terminal_}"
-    local f="/tmp/zjd-${n}.txt"
-    (( n >= 2 )) && zellij action go-to-tab-name "shell" || zellij action go-to-tab-name "workspace"
-    for i in {1..5}; do
-        [[ "$(zellij action list-clients | tail -1 | awk '{print $2}')" == "terminal_${n}" ]] && {
-            zellij action dump-screen -f "$f"
-            zellij action go-to-tab-name "workspace"
-            cat "$f"
-            return 0
-        }
-        zellij action focus-next-pane
-    done
-    zellij action go-to-tab-name "workspace"
-    echo "Pane terminal_${n} not found"
+```json
+{
+  "panes": {
+    "terminal_1": "opencode",
+    "terminal_2": "Pane #1",
+    "terminal_3": "nvim main.rs",
+    "plugin_0": "zellij:tab-bar"
+  },
+  "timestamp": 1733600000
 }
 ```
 
-Then use it:
-
-```bash
-zjdump 2  # Dump terminal_2 content
-```
-
-**Note:** Adjust the tab names ("shell", "workspace") to match your layout.
-
-## Manual Loading
-
-If you prefer to load manually instead of auto-load:
-
-```bash
-zellij plugin -- file:~/.config/zellij/plugins/zellij-pane-tracker.wasm
-```
-
-## How It Works
-
-1. Plugin subscribes to `PaneUpdate` events
-2. On each update, extracts pane IDs, names, and commands from `PaneManifest`
-3. Writes JSON to `/tmp/zj-pane-names.json` via shell command
-4. Runs in background with minimal UI footprint
-
 ## Requirements
 
-- Zellij 0.40.0 or later
-- Rust (for building)
+- Zellij 0.40.0+
+- Rust (for building the plugin)
+- Bun (for MCP server)
+- jq (for zjdump script)
+
+## Project Structure
+
+```
+zellij-pane-tracker/
+├── src/main.rs          # Zellij plugin (Rust/WASM)
+├── mcp-server/
+│   ├── index.ts         # MCP server (TypeScript/Bun)
+│   └── package.json
+├── scripts/
+│   └── zjdump           # Pane content dumper (zsh)
+├── Cargo.toml
+└── README.md
+```
 
 ## License
 
@@ -140,3 +173,7 @@ MIT
 ## Author
 
 Nakul Tiruviluamala ([@theslyprofessor](https://github.com/theslyprofessor))
+
+---
+
+**Feedback welcome!** This started as a personal tool to make my AI assistant more useful. If you find bugs or have ideas, open an issue.
