@@ -78,7 +78,12 @@ server.tool(
   async ({ pane_id }) => {
     try {
       // Use ~/zjdump which handles all the complexity of finding and dumping panes
-      const result = await $`${ZJDUMP_PATH} ${pane_id}`.text();
+      // Explicitly pass ZELLIJ env vars to ensure they're available in the subprocess
+      const result = await $`${ZJDUMP_PATH} ${pane_id}`.env({
+        ...process.env,
+        ZELLIJ: process.env.ZELLIJ || "0",
+        ZELLIJ_SESSION_NAME: process.env.ZELLIJ_SESSION_NAME || "",
+      }).text();
       return {
         content: [
           {
@@ -88,11 +93,13 @@ server.tool(
         ],
       };
     } catch (e: any) {
+      // Include diagnostic info about env vars
+      const envInfo = `ZELLIJ=${process.env.ZELLIJ}, SESSION=${process.env.ZELLIJ_SESSION_NAME}`;
       return {
         content: [
           {
             type: "text",
-            text: `Failed to dump pane '${pane_id}': ${e.message}\n\nMake sure:\n1. You're running inside a Zellij session\n2. The pane-tracker plugin is running\n3. ~/zjdump exists and is executable`,
+            text: `Failed to dump pane '${pane_id}': ${e.message}\n\nEnv: ${envInfo}\n\nMake sure:\n1. You're running inside a Zellij session\n2. The pane-tracker plugin is running\n3. ~/zjdump exists and is executable`,
           },
         ],
       };
