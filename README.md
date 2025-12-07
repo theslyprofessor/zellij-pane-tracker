@@ -80,11 +80,16 @@ Add to your MCP config (e.g., `~/.config/opencode/opencode.json`):
 ```
 
 Restart your AI tool. It now has these capabilities:
-- `get_panes` - List all panes with IDs and names
-- `dump_pane` - Get full scrollback of any pane
-- `run_in_pane` - Execute commands in other panes
-- `new_pane` - Create panes
-- `rename_session` - Rename the Zellij session
+
+| Tool | Description |
+|------|-------------|
+| `zellij_get_panes` | List all panes with IDs and display names |
+| `zellij_dump_pane` | Get full scrollback of any pane (by name or ID) |
+| `zellij_run_in_pane` | Execute commands in other panes |
+| `zellij_new_pane` | Create new panes |
+| `zellij_rename_session` | Rename the Zellij session |
+
+**Pane identification:** Use either the Zellij display name (`"Pane #1"`, `"opencode"`) or terminal ID (`"2"`, `"terminal_2"`).
 
 ## How It Works
 
@@ -173,6 +178,25 @@ MIT
 ## Author
 
 Nakul Tiruviluamala ([@theslyprofessor](https://github.com/theslyprofessor))
+
+---
+
+## Example Conversation
+
+```
+User: "What's in my other panes?"
+AI: [calls zellij_get_panes]
+    "You have 4 panes: terminal_0 (Yazi), terminal_1 (opencode), 
+     terminal_2 (Pane #1), terminal_3 (Pane #2)"
+
+User: "Check Pane #1"
+AI: [calls zellij_dump_pane("Pane #1")]
+    "Pane #1 shows an idle zsh prompt at ~ after running 'pwd'"
+
+User: "Run 'bun test' in Pane #2"
+AI: [calls zellij_run_in_pane("Pane #2", "bun test")]
+    "Executed 'bun test' in terminal_3"
+```
 
 ---
 
