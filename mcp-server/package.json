@@ -1,0 +1,17 @@
+{
+  "name": "zellij-pane-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Zellij pane management",
+  "type": "module",
+  "main": "index.ts",
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun --watch run index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
