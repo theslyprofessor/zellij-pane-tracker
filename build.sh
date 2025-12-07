@@ -14,28 +14,28 @@ if ! command -v cargo &> /dev/null; then
     exit 1
 fi
 
-# Check if wasm32-wasi target is installed
-if ! rustup target list --installed | grep -q wasm32-wasi; then
-    echo "📦 Installing wasm32-wasi target..."
-    rustup target add wasm32-wasi
+# Check if wasm32-wasip1 target is installed (wasm32-wasi is deprecated)
+if ! rustup target list --installed | grep -q wasm32-wasip1; then
+    echo "📦 Installing wasm32-wasip1 target..."
+    rustup target add wasm32-wasip1
 fi
 
 # Build the plugin
 echo "🔨 Compiling plugin..."
-cargo build --release --target wasm32-wasi
+cargo build --release --target wasm32-wasip1
 
 # Copy to zellij plugins directory
 PLUGIN_DIR="$HOME/.config/zellij/plugins"
 mkdir -p "$PLUGIN_DIR"
 
 echo "📋 Installing to $PLUGIN_DIR..."
-cp target/wasm32-wasi/release/zellij-pane-tracker.wasm "$PLUGIN_DIR/"
+cp target/wasm32-wasip1/release/zellij_pane_tracker.wasm "$PLUGIN_DIR/"
 
 echo "✅ Build complete!"
 echo ""
-echo "Plugin installed to: $PLUGIN_DIR/zellij-pane-tracker.wasm"
+echo "Plugin installed to: $PLUGIN_DIR/zellij_pane_tracker.wasm"
 echo ""
 echo "To use:"
-echo "  zellij plugin -- file:$PLUGIN_DIR/zellij-pane-tracker.wasm"
+echo "  zellij plugin -- file:$PLUGIN_DIR/zellij_pane_tracker.wasm"
 echo ""
 echo "Or add to your Zellij layout (see README.md)"

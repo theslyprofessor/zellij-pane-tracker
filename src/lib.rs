@@ -20,9 +20,10 @@ impl ZellijPlugin for State {
         // Subscribe to pane updates to track name changes
         subscribe(&[EventType::PaneUpdate]);
         
-        // Request initial pane manifest
-        request_plugin_permission(&[
+        // Request permissions
+        request_permission(&[
             PermissionType::ReadApplicationState,
+            PermissionType::RunCommands,
         ]);
     }
 
@@ -49,17 +50,21 @@ impl State {
     fn update_pane_names(&mut self, manifest: PaneManifest) {
         self.pane_names.clear();
         
-        for pane_info in manifest.panes.values() {
-            let pane_id = if pane_info.is_plugin {
-                format!("plugin_{}", pane_info.id)
-            } else {
-                format!("terminal_{}", pane_info.id)
-            };
-            
-            // Use the pane title (which includes user-set names)
-            let pane_name = pane_info.title.clone();
-            
-            self.pane_names.insert(pane_id, pane_name);
+        // manifest.panes is HashMap<usize, Vec<PaneInfo>>
+        // Key is tab index, value is vector of panes in that tab
+        for (_tab_index, panes_in_tab) in &manifest.panes {
+            for pane_info in panes_in_tab {
+                let pane_id = if pane_info.is_plugin {
+                    format!("plugin_{}", pane_info.id)
+                } else {
+                    format!("terminal_{}", pane_info.id)
+                };
+                
+                // Use the pane title (which includes user-set names)
+                let pane_name = pane_info.title.clone();
+                
+                self.pane_names.insert(pane_id, pane_name);
+            }
         }
     }
 
@@ -82,7 +87,7 @@ impl State {
             );
             
             run_command(
-                &["sh".to_string(), "-c".to_string(), write_cmd],
+                &["sh", "-c", &write_cmd],
                 BTreeMap::new(),
             );
         }
