@@ -6,11 +6,8 @@ authors = ["Nakul Tiruviluamala <nakul@theslyprofessor.com>"]
 description = "Zellij plugin that exports pane names to a JSON file for shell integration"
 license = "MIT"
 
-[lib]
-crate-type = ["cdylib"]
-
 [dependencies]
-zellij-tile = "0.40.0"
+zellij-tile = "0.43.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
