@@ -282,7 +282,7 @@ async function dumpPaneSimple(sessionName: string, targetTerminalNum: string, me
     targetPane = targetNum;
   } else {
     targetTab = 1;
-    targetPane = targetNum - 2;
+    targetPane = (targetNum - 2) === 0 ? 1 : 0;
   }
   
   const match = dumps.find(d => d.tab === targetTab && d.paneInTab === targetPane);
