@@ -2,5 +2,9 @@
 Cargo.lock
 *.wasm
 
+# Build artifacts
+mcp-server/dist/
+node_modules/
+
 # Internal AI context (not for public repo)
 AGENTS.md

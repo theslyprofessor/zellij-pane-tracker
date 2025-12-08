@@ -84,12 +84,28 @@ Restart your AI tool. It now has these capabilities:
 | Tool | Description |
 |------|-------------|
 | `zellij_get_panes` | List all panes with IDs and display names |
-| `zellij_dump_pane` | Get full scrollback of any pane (by name or ID) |
+| `zellij_dump_pane` | Get scrollback of any pane (default: last 100 lines) |
 | `zellij_run_in_pane` | Execute commands in other panes |
 | `zellij_new_pane` | Create new panes |
 | `zellij_rename_session` | Rename the Zellij session |
 
-**Pane identification:** Use either the Zellij display name (`"Pane #1"`, `"opencode"`) or terminal ID (`"2"`, `"terminal_2"`).
+**Pane identification:** Use plain numbers (`"4"` → `"Pane #4"`), display names (`"Pane #1"`, `"opencode"`), or terminal IDs (`"terminal_2"`).
+
+### dump_pane Options
+
+By default, `zellij_dump_pane` returns the last 100 lines for faster responses:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `pane_id` | string | required | Pane identifier |
+| `full` | boolean | false | Return entire scrollback (can be slow) |
+| `lines` | number | 100 | Lines from end to return (ignored if full=true) |
+
+```
+zellij_dump_pane("4")              # Last 100 lines of Pane #4
+zellij_dump_pane("4", full=true)   # Entire scrollback
+zellij_dump_pane("4", lines=50)    # Last 50 lines
+```
 
 ## How It Works
 
@@ -191,7 +207,11 @@ AI: [calls zellij_get_panes]
 
 User: "Check Pane #1"
 AI: [calls zellij_dump_pane("Pane #1")]
-    "Pane #1 shows an idle zsh prompt at ~ after running 'pwd'"
+    "Pane #1 shows the last 100 lines - an idle zsh prompt after 'pwd'"
+
+User: "Show me the full build log in pane 4"
+AI: [calls zellij_dump_pane("4", full=true)]
+    "Here's the complete build output (847 lines)..."
 
 User: "Run 'bun test' in Pane #2"
 AI: [calls zellij_run_in_pane("Pane #2", "bun test")]

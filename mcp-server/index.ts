@@ -7,6 +7,9 @@ import { $ } from "bun";
 const PANE_JSON_PATH = "/tmp/zj-pane-names.json";
 const ZJDUMP_PATH = `${process.env.HOME}/zjdump`;
 
+// Default dump settings - limits scrollback to keep responses fast
+const DEFAULT_DUMP_LINES = 100; // Last N lines by default
+
 interface PaneInfo {
   panes: Record<string, string>;
   timestamp: number;
@@ -63,16 +66,27 @@ async function getActiveSessionName(): Promise<string | null> {
 }
 
 // Resolve pane identifier to terminal ID number
-// Accepts: "2", "terminal_2", "Pane #1", "Pane #2", "opencode", etc.
+// Accepts: "4", "Pane #4", "terminal_2", "opencode", etc.
+// PRIORITY: Display name ("Pane #N") always takes precedence over terminal ID
 function resolvePaneId(pane_id: string, metadata: PaneInfo | null): string | null {
-  // If it's already a number, return it
-  if (/^\d+$/.test(pane_id)) {
-    return pane_id;
-  }
-  
-  // If it's terminal_N format, extract N
+  // If it's terminal_N format, extract N (explicit terminal ID)
   if (pane_id.startsWith('terminal_')) {
     return pane_id.replace('terminal_', '');
+  }
+  
+  // If it's a plain number like "4", treat as "Pane #4" first
+  // This is the most intuitive behavior - users see "Pane #4" in Zellij UI
+  if (/^\d+$/.test(pane_id) && metadata) {
+    const displayName = `pane #${pane_id}`;
+    for (const [id, name] of Object.entries(metadata.panes)) {
+      if (!id.startsWith('terminal_')) continue;
+      if (name.toLowerCase().trim() === displayName) {
+        return id.replace('terminal_', '');
+      }
+    }
+    // No "Pane #N" found - don't fall back to terminal ID
+    // This prevents confusing behavior where "4" -> terminal_4 (which might be "Pane #3")
+    return null;
   }
   
   // Try to find by EXACT name match first (case-insensitive)
@@ -110,7 +124,7 @@ function resolvePaneId(pane_id: string, metadata: PaneInfo | null): string | nul
 // Create MCP server
 const server = new McpServer({
   name: "zellij-pane-mcp",
-  version: "0.3.0",
+  version: "0.4.0",
 });
 
 // Tool: get_panes - List all panes with their names
@@ -156,149 +170,178 @@ server.tool(
   }
 );
 
-// Helper: Dump current pane and check if it matches target by checking the dump file metadata
-async function dumpAndCheckPane(sessionName: string, targetTerminalNum: string, dumpFile: string): Promise<boolean> {
-  // Dump current screen
-  await $`zellij -s ${sessionName} action dump-screen --full ${dumpFile}`.quiet();
-  
-  // Read pane metadata to see which pane we're on
-  const metadata = await getPaneMetadata();
-  if (!metadata) return false;
-  
-  // We can't easily tell which pane we're on from the dump alone
-  // So we use a different approach: write a marker, check if it appears
-  return false; // This approach won't work
-}
-
-// Helper: Brute force find and dump a pane by cycling through everything
-async function findAndDumpPane(sessionName: string, targetTerminalNum: string, metadata: PaneInfo | null): Promise<string | null> {
-  const tabCount = await getTabCount(sessionName);
-  const terminalPaneCount = metadata 
-    ? Object.keys(metadata.panes).filter(id => id.startsWith('terminal_')).length 
-    : 10;
-  
-  const dumpFile = `/tmp/zjmcp-dump-${targetTerminalNum}.txt`;
-  const markerFile = `/tmp/zjmcp-marker-${Date.now()}.txt`;
-  const marker = `ZJMCP_PANE_MARKER_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  
-  // Write marker file that we'll use to identify when we're in the right pane
-  await Bun.write(markerFile, marker);
-  
-  // Strategy: Go to each tab, then cycle through panes
-  // For each pane, check if it's our target by using the JSON metadata
-  // The metadata file maps terminal_N -> name, and we know our target is terminal_{targetTerminalNum}
-  
-  // Since we can't reliably detect current pane, use go-to-tab + focus by index approach
-  // First, let's try using the pane focus by ID if zellij supports it
-  
-  // Try direct pane focus (newer zellij versions)
+// Get the currently focused pane ID using list-clients
+async function getCurrentPaneId(sessionName: string): Promise<string | null> {
   try {
-    // Move to the pane by terminal ID directly using write-to-pane
-    // Actually, let's try a simpler approach: go through tabs and dump each pane
-    
-    for (let tabIdx = 0; tabIdx < tabCount; tabIdx++) {
-      // Go to this tab
-      await $`zellij -s ${sessionName} action go-to-tab ${tabIdx + 1}`.quiet();
-      await Bun.sleep(30);
-      
-      // Cycle through panes in this tab
-      for (let paneIdx = 0; paneIdx < terminalPaneCount; paneIdx++) {
-        // Dump current pane
-        await $`zellij -s ${sessionName} action dump-screen --full ${dumpFile}`.quiet();
-        
-        // Read fresh metadata (it updates with focused pane info from the plugin)
-        const freshMeta = await getPaneMetadata();
-        
-        // Check if this pane's ID in metadata matches - but we need focused pane info
-        // The metadata just lists all panes, not which is focused
-        
-        // Alternative: Check the pane-names.json for a "focused" field if plugin provides it
-        // For now, let's just cycle and try to match by content or trial
-        
-        // Actually, simplest fix: we know terminal_2 and terminal_3 are in tab "shell" (tab 2)
-        // Let's just go to that tab and dump
-        
-        await $`zellij -s ${sessionName} action focus-next-pane`.quiet();
-        await Bun.sleep(20);
+    const result = await $`zellij -s ${sessionName} action list-clients 2>/dev/null`.text();
+    // Output format: "1         terminal_1     /path/to/process"
+    // We want the second column (terminal_N)
+    const lastLine = result.trim().split('\n').pop();
+    if (lastLine) {
+      const parts = lastLine.trim().split(/\s+/);
+      if (parts.length >= 2 && parts[1].startsWith('terminal_')) {
+        return parts[1];
       }
     }
   } catch (e) {
-    console.error("Navigation error:", e);
+    console.error("Failed to get current pane:", e);
   }
-  
   return null;
 }
 
-// SIMPLE APPROACH: Just go to the shell tab, cycle panes, dump each one with unique filenames
-async function dumpPaneSimple(sessionName: string, targetTerminalNum: string, metadata: PaneInfo | null): Promise<string | null> {
-  const tabCount = await getTabCount(sessionName);
-  const terminalPaneCount = metadata 
-    ? Object.keys(metadata.panes).filter(id => id.startsWith('terminal_')).length 
-    : 4;
+// Get list of tab names
+async function getTabNames(sessionName: string): Promise<string[]> {
+  try {
+    const result = await $`zellij -s ${sessionName} action query-tab-names 2>/dev/null`.text();
+    return result.trim().split('\n').filter(line => line.trim());
+  } catch {
+    return [];
+  }
+}
+
+// Navigate to target pane by cycling through all tabs and panes
+// Returns true if found and focused on target, false otherwise
+async function navigateToTargetPane(
+  sessionName: string, 
+  targetPaneId: string, 
+  maxPanesPerTab: number = 10
+): Promise<boolean> {
+  const tabs = await getTabNames(sessionName);
+  if (tabs.length === 0) tabs.push("Tab #1"); // Fallback
   
-  // Remember starting position by going to tab 1 first as baseline  
-  const startTab = 1;
-  await $`zellij -s ${sessionName} action go-to-tab ${startTab}`.quiet();
-  await Bun.sleep(30);
-  
-  // Now systematically visit each tab and each pane, dumping with position info
-  const dumps: { tab: number; paneInTab: number; content: string }[] = [];
-  
-  for (let tabIdx = 0; tabIdx < tabCount; tabIdx++) {
-    await $`zellij -s ${sessionName} action go-to-tab ${tabIdx + 1}`.quiet();
-    await Bun.sleep(30);
+  for (const tab of tabs) {
+    // Go to this tab
+    await $`zellij -s ${sessionName} action go-to-tab-name ${tab} 2>/dev/null`.quiet();
     
-    // Count panes per tab (rough estimate: total / tabs, or just try a few)
-    const panesInThisTab = tabIdx === 0 ? 2 : 2; // workspace has 2, shell has 2
+    // Track first pane in this tab to detect wrap-around
+    let firstPaneInTab: string | null = null;
     
-    for (let paneIdx = 0; paneIdx < panesInThisTab; paneIdx++) {
-      const dumpFile = `/tmp/zjmcp-t${tabIdx}-p${paneIdx}.txt`;
-      await $`zellij -s ${sessionName} action dump-screen --full ${dumpFile}`.quiet();
+    for (let i = 0; i < maxPanesPerTab; i++) {
+      const currentPane = await getCurrentPaneId(sessionName);
       
-      try {
-        const content = await Bun.file(dumpFile).text();
-        dumps.push({ tab: tabIdx, paneInTab: paneIdx, content });
-      } catch {}
+      // Detect wrap-around (we've cycled back to start of this tab)
+      if (firstPaneInTab === null) {
+        firstPaneInTab = currentPane;
+      } else if (currentPane === firstPaneInTab && i > 0) {
+        break; // Done with this tab
+      }
+      
+      // Check if we found our target
+      if (currentPane === targetPaneId) {
+        return true;
+      }
       
       await $`zellij -s ${sessionName} action focus-next-pane`.quiet();
-      await Bun.sleep(20);
     }
   }
   
-  // Return to tab 1 (workspace)
-  await $`zellij -s ${sessionName} action go-to-tab 1`.quiet();
+  return false;
+}
+
+// Dump a specific pane by navigating to it, dumping, then returning to origin
+// Options:
+//   full: true = dump entire scrollback (can be slow/large)
+//   lines: N = dump last N lines (default: DEFAULT_DUMP_LINES)
+async function dumpPaneSimple(
+  sessionName: string, 
+  targetTerminalNum: string, 
+  metadata: PaneInfo | null,
+  options: { full?: boolean; lines?: number } = {}
+): Promise<string | null> {
+  const targetPaneId = `terminal_${targetTerminalNum}`;
+  const dumpFile = `/tmp/zjmcp-dump-${targetTerminalNum}.txt`;
+  const { full = false, lines = DEFAULT_DUMP_LINES } = options;
   
-  // Now figure out which dump corresponds to terminal_N
-  // terminal_0 = tab 0, pane 0 (yazi)
-  // terminal_1 = tab 0, pane 1 (opencode)
-  // terminal_2 = tab 1, pane 0 
-  // terminal_3 = tab 1, pane 1
+  // Remember where we started
+  const originPaneId = await getCurrentPaneId(sessionName);
+  const originTab = (await getTabNames(sessionName))[0] || "Tab #1";
   
-  const targetNum = parseInt(targetTerminalNum);
-  let targetTab: number, targetPane: number;
+  // Build dump command - use --full flag only when explicitly requested
+  const dumpCmd = full 
+    ? $`zellij -s ${sessionName} action dump-screen --full ${dumpFile}`
+    : $`zellij -s ${sessionName} action dump-screen ${dumpFile}`;
   
-  if (targetNum < 2) {
-    targetTab = 0;
-    targetPane = targetNum;
-  } else {
-    targetTab = 1;
-    targetPane = (targetNum - 2) === 0 ? 1 : 0;
+  // Quick check: are we already on the target pane?
+  if (originPaneId === targetPaneId) {
+    await dumpCmd.quiet();
+    try {
+      const content = await Bun.file(dumpFile).text();
+      return full ? content : limitToLastNLines(content, lines);
+    } catch {
+      return null;
+    }
   }
   
-  const match = dumps.find(d => d.tab === targetTab && d.paneInTab === targetPane);
-  return match?.content || null;
+  // Navigate to target pane
+  const found = await navigateToTargetPane(sessionName, targetPaneId);
+  
+  if (!found) {
+    // Return to origin before failing
+    if (originPaneId) {
+      await navigateToTargetPane(sessionName, originPaneId);
+    }
+    return null;
+  }
+  
+  // Dump the target pane
+  await (full 
+    ? $`zellij -s ${sessionName} action dump-screen --full ${dumpFile}`
+    : $`zellij -s ${sessionName} action dump-screen ${dumpFile}`
+  ).quiet();
+  
+  // Read the dump
+  let content: string | null = null;
+  try {
+    const rawContent = await Bun.file(dumpFile).text();
+    content = full ? rawContent : limitToLastNLines(rawContent, lines);
+  } catch {}
+  
+  // Return to origin pane
+  if (originPaneId && originPaneId !== targetPaneId) {
+    await navigateToTargetPane(sessionName, originPaneId);
+  }
+  
+  return content;
+}
+
+// Helper to get last N lines from content, stripping trailing empty lines
+function limitToLastNLines(content: string, n: number): string {
+  const lines = content.split('\n');
+  
+  // Strip trailing empty lines
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+    lines.pop();
+  }
+  
+  if (lines.length <= n) {
+    return lines.join('\n');
+  }
+  
+  const truncated = lines.slice(-n);
+  const omitted = lines.length - n;
+  return `[... ${omitted} lines omitted, showing last ${n} lines ...]\n\n${truncated.join('\n')}`;
 }
 
 // Tool: dump_pane - Get content of a specific pane using direct zellij commands
 server.tool(
   "dump_pane",
-  "Dump the full scrollback content of a specific terminal pane. Can use terminal ID (e.g., '2' or 'terminal_2') or display name (e.g., 'Pane #2', 'opencode').",
+  `Dump the scrollback content of a specific terminal pane. Can use terminal ID (e.g., '2' or 'terminal_2') or display name (e.g., 'Pane #2', 'opencode').
+
+By default, returns last ${DEFAULT_DUMP_LINES} lines for faster responses. Use 'full: true' for complete scrollback, or 'lines: N' to customize.`,
   {
     pane_id: z
       .string()
       .describe("Pane identifier - Zellij display name (e.g., 'Pane #1', 'Pane #2', 'opencode') OR terminal ID (e.g., '2', 'terminal_2')"),
+    full: z
+      .boolean()
+      .optional()
+      .describe("If true, dump entire scrollback history (can be slow/large). Default: false"),
+    lines: z
+      .number()
+      .optional()
+      .describe(`Number of lines to return from end of scrollback. Default: ${DEFAULT_DUMP_LINES}. Ignored if 'full' is true.`),
   },
-  async ({ pane_id }) => {
+  async ({ pane_id, full = false, lines }) => {
     try {
       const sessionName = await getActiveSessionName();
       if (!sessionName) {
@@ -322,8 +365,14 @@ server.tool(
         };
       }
 
+      // Build options for dump
+      const dumpOptions: { full?: boolean; lines?: number } = { full };
+      if (lines !== undefined && !full) {
+        dumpOptions.lines = lines;
+      }
+
       // Use simple brute-force approach: visit all tabs/panes, dump everything, return the right one
-      const content = await dumpPaneSimple(sessionName, terminalNum, metadata);
+      const content = await dumpPaneSimple(sessionName, terminalNum, metadata, dumpOptions);
       
       if (!content) {
         return {
@@ -364,17 +413,18 @@ server.tool(
       }
 
       const targetPaneId = `terminal_${terminalNum}`;
-      const terminalPaneCount = metadata 
-        ? Object.keys(metadata.panes).filter(id => id.startsWith('terminal_')).length 
-        : 10;
       
-      const originPane = await getCurrentPane(sessionName);
+      // Remember where we started
+      const originPaneId = await getCurrentPaneId(sessionName);
       
       // Navigate to target
-      if (originPane !== targetPaneId) {
-        const found = await navigateToPane(sessionName, targetPaneId, terminalPaneCount + 1);
+      if (originPaneId !== targetPaneId) {
+        const found = await navigateToTargetPane(sessionName, targetPaneId);
         if (!found) {
-          await navigateToPane(sessionName, originPane, terminalPaneCount + 1);
+          // Return to origin before failing
+          if (originPaneId) {
+            await navigateToTargetPane(sessionName, originPaneId);
+          }
           return { content: [{ type: "text", text: `Could not navigate to ${targetPaneId}` }] };
         }
       }
@@ -384,8 +434,8 @@ server.tool(
       await $`zellij -s ${sessionName} action write 10`.quiet(); // Enter
       
       // Return to origin
-      if (originPane !== targetPaneId) {
-        await navigateToPane(sessionName, originPane, terminalPaneCount + 1);
+      if (originPaneId && originPaneId !== targetPaneId) {
+        await navigateToTargetPane(sessionName, originPaneId);
       }
       
       return { content: [{ type: "text", text: `Executed in ${targetPaneId}: ${command}` }] };
@@ -471,7 +521,9 @@ server.tool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Zellij Pane MCP server v0.3.0 running on stdio (with tab cycling)");
+  console.error("Zellij Pane MCP server v0.4.0 running on stdio (smart dump limiting)");
 }
 
 main().catch(console.error);
+
+// v0.4.0 - Smart dump limiting (default 100 lines, optional full dump)
