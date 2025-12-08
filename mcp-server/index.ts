@@ -158,7 +158,7 @@ function resolvePaneId(pane_id: string, metadata: PaneInfo | null): string | nul
 // Create MCP server
 const server = new McpServer({
   name: "zellij-pane-mcp",
-  version: "0.6.1",
+  version: "0.7.0",
 });
 
 // Tool: get_panes - List all panes with their names
@@ -414,28 +414,22 @@ async function resolveAndNavigateToPane(
     return { found: false, terminalNum: null, tabName: null };
   }
   
-  // No tab specified - search current tab first (fast path)
+  // No tab specified - search current tab ONLY (don't fall back to other tabs)
+  // This matches user expectation: "Pane 2" means "Pane #2 in this tab"
+  // 
+  // IMPORTANT: findPaneInCurrentTab leaves focus on the found pane, so we're already there.
+  // We pass originTabName so the caller knows where we started (for return navigation).
   const currentTabResult = await findPaneInCurrentTab(sessionName, paneQuery, metadata);
   if (currentTabResult) {
-    // Found in current tab! Get tab name for return optimization
-    const originSearch = await navigateToTargetPaneWithTabTracking(sessionName, currentTabResult.paneId, 1);
-    return { found: true, terminalNum: currentTabResult.terminalId, tabName: originSearch.tabName };
+    // Found in current tab! We're already focused on it.
+    // tabName is passed from caller (they know which tab we started on)
+    return { found: true, terminalNum: currentTabResult.terminalId, tabName: null };
   }
   
-  // Not in current tab - fall back to resolvePaneId + full navigation
-  const terminalNum = resolvePaneId(paneQuery, metadata);
-  if (!terminalNum) {
-    return { found: false, terminalNum: null, tabName: null };
-  }
-  
-  const targetPaneId = `terminal_${terminalNum}`;
-  const navResult = await navigateToTargetPaneWithTabTracking(sessionName, targetPaneId);
-  
-  return { 
-    found: navResult.found, 
-    terminalNum: navResult.found ? terminalNum : null, 
-    tabName: navResult.tabName 
-  };
+  // NOT FOUND in current tab - return failure
+  // User must explicitly specify tab if they want a pane from another tab
+  // e.g., "Tab 2 Pane 1" or "shell Pane 2"
+  return { found: false, terminalNum: null, tabName: null };
 }
 
 // Return to origin pane efficiently - go directly to origin tab first
@@ -849,11 +843,13 @@ server.tool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Zellij Pane MCP server v0.6.1 running on stdio (named tab support)");
+  console.error("Zellij Pane MCP server v0.7.0 running on stdio (strict current-tab-only)");
 }
 
 main().catch(console.error);
 
+// v0.7.0 - BREAKING: "Pane N" now ONLY searches current tab (no fallback to other tabs)
+//          User must explicitly specify tab for cross-tab queries ("Tab 2 Pane 1")
 // v0.6.1 - Support named tabs ("shell Pane 1") in addition to numeric ("Tab 2 Pane 1")
 // v0.6.0 - Tab-scoped pane queries ("Pane 1" searches current tab first, "Tab 2 Pane 1" goes to specific tab)
 // v0.5.0 - Optimized return navigation (direct tab jump instead of full scan)
