@@ -6,5 +6,4 @@ Cargo.lock
 mcp-server/dist/
 node_modules/
 
-# Internal AI context (not for public repo)
-AGENTS.md
+# Note: AGENTS.md is intentionally NOT ignored - it provides context for AI agents
