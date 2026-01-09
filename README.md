@@ -1,6 +1,6 @@
 # zellij-pane-tracker
 
-A Zellij plugin + MCP server that lets AI assistants see and interact with your terminal panes.
+A Zellij plugin + IPC protocol that lets AI assistants see and interact with your terminal panes.
 
 ## The Problem
 
@@ -8,10 +8,14 @@ AI coding assistants (Claude, GPT, Cursor, etc.) running in a terminal pane are 
 
 ## The Solution
 
-This project has two components:
+This project provides **core infrastructure** with clean separation of concerns:
 
-1. **Zellij Plugin** - Exports pane metadata to JSON (`/tmp/zj-pane-names.json`)
-2. **MCP Server** - Exposes pane operations to AI assistants via [Model Context Protocol](https://modelcontextprotocol.io/)
+1. **Zellij Plugin** (Rust/WASM) - Exports pane metadata to JSON (`/tmp/zj-pane-names.json`)
+2. **Canvas API** (TypeScript) - High-level abstraction for pane operations
+3. **IPC Protocol** (Unix sockets) - Language-agnostic communication layer
+4. **Reference MCP Server** - Example integration (see also: separate OpenCode integration)
+
+**Architecture inspired by:** [claude-canvas](https://github.com/dvdsgl/claude-canvas)
 
 Together, they let your AI assistant:
 - Know what panes exist and what they're named
@@ -19,6 +23,14 @@ Together, they let your AI assistant:
 - Run commands in other panes
 - Create new panes
 - Rename sessions
+
+## New: IPC Protocol
+
+This repo now includes an **IPC (Inter-Process Communication) protocol** for clean separation between:
+- **Core functionality** (this repo) - Plugin, Canvas API, IPC server
+- **AI integrations** (separate repos) - OpenCode, Claude Desktop, etc.
+
+See [IPC Documentation](ipc/README.md) and [OpenCode Integration Guide](docs/OPENCODE_INTEGRATION.md)
 
 ## Quick Start
 
@@ -109,6 +121,43 @@ zellij_dump_pane("4", lines=50)    # Last 50 lines
 
 ## How It Works
 
+### New Architecture (with IPC)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Zellij Session                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │ terminal_1  │  │ terminal_2  │  │ terminal_3  │         │
+│  │  opencode   │  │  IPC Server │  │    nvim     │         │
+│  └──────┬──────┘  └──────┬──────┘  └─────────────┘         │
+└─────────┼─────────────────┼────────────────────────────────┘
+          │                 │
+          │ MCP             │ IPC (Unix socket)
+          │                 │
+┌─────────▼────────┐  ┌─────▼──────────────────────────────┐
+│  OpenCode MCP    │  │  IPC Server                        │
+│  (separate repo) │◄─┤  - Canvas API                      │
+│                  │  │  - Reads /tmp/zj-pane-names.json   │
+│                  │  │  - Executes Zellij actions         │
+└──────────────────┘  └────────────────────────────────────┘
+                                  │
+                                  │ reads
+                                  ▼
+                      ┌──────────────────────────┐
+                      │  pane-tracker plugin     │
+                      │  (writes pane metadata)  │
+                      └──────────────────────────┘
+                                  │
+                                  │ writes
+                                  ▼
+                      ┌──────────────────────────┐
+                      │ /tmp/zj-pane-names.json  │
+                      │   { panes: {...} }       │
+                      └──────────────────────────┘
+```
+
+### Traditional Architecture (reference MCP server)
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Zellij Session                          │
@@ -135,8 +184,8 @@ zellij_dump_pane("4", lines=50)    # Last 50 lines
 
 1. **Plugin** subscribes to Zellij's `PaneUpdate` events
 2. On each update, writes pane metadata to `/tmp/zj-pane-names.json`
-3. **MCP Server** reads this JSON to answer `get_panes` requests
-4. **zjdump** script navigates to a pane, captures content, returns to origin
+3. **IPC Server** (or MCP Server) reads this JSON and executes Zellij actions
+4. **AI Integrations** connect via IPC protocol for clean separation
 
 ## Usage Without MCP
 
@@ -177,15 +226,98 @@ cat /tmp/zj-pane-names.json
 
 ```
 zellij-pane-tracker/
-├── src/main.rs          # Zellij plugin (Rust/WASM)
+├── src/main.rs              # Zellij plugin (Rust/WASM)
+├── ipc/
+│   ├── types.ts            # IPC message protocol definitions
+│   ├── server.ts           # IPC server implementation
+│   ├── client.ts           # IPC client implementation
+│   ├── ipc-server-standalone.ts  # Standalone IPC server binary
+│   ├── ipc-client-cli.ts   # Example CLI client for testing
+│   └── README.md           # IPC protocol documentation
+├── api/
+│   └── canvas-api.ts       # High-level Zellij operations API
 ├── mcp-server/
-│   ├── index.ts         # MCP server (TypeScript/Bun)
-│   └── package.json
+│   └── index.ts            # Reference MCP server (legacy)
 ├── scripts/
-│   └── zjdump           # Pane content dumper (zsh)
+│   └── zjdump              # Pane content dumper (zsh)
+├── docs/
+│   └── OPENCODE_INTEGRATION.md  # Guide for separate OpenCode repo
 ├── Cargo.toml
+├── package.json
 └── README.md
 ```
+
+## Using the IPC Protocol
+
+### Start IPC Server
+
+```bash
+# In a Zellij pane
+bun run ipc/ipc-server-standalone.ts
+```
+
+The server listens on `/tmp/zellij-pane-{session}.sock` and responds to client requests.
+
+### Connect a Client
+
+```typescript
+import { connectWithRetry, getSocketPath } from "zellij-pane-tracker/ipc";
+
+const client = await connectWithRetry({
+  socketPath: getSocketPath(),
+  onMessage: (msg) => console.log("Received:", msg),
+  onDisconnect: () => console.log("Disconnected")
+});
+
+// Get panes
+client.send({ type: "getPanes" });
+
+// Dump pane content
+client.send({ 
+  type: "dumpPane", 
+  paneId: "terminal_2",
+  options: { lines: 50 }
+});
+
+// Run command
+client.send({
+  type: "runInPane",
+  paneId: "terminal_3",
+  command: "npm test"
+});
+```
+
+### Test with CLI
+
+```bash
+# List all panes
+bun run ipc/ipc-client-cli.ts getPanes
+
+# Dump pane content
+bun run ipc/ipc-client-cli.ts dumpPane terminal_2
+
+# Run command in pane
+bun run ipc/ipc-client-cli.ts runInPane terminal_2 "echo hello"
+```
+
+See [IPC Documentation](ipc/README.md) for full protocol specification.
+
+## Creating an OpenCode Integration
+
+For AI assistant integrations (OpenCode, Claude Desktop, etc.), create a **separate repository** that uses the IPC protocol:
+
+1. Create new repo `zellij-pane-opencode`
+2. Add dependency: `"zellij-pane-tracker": "github:theslyprofessor/zellij-pane-tracker"`
+3. Implement MCP server using IPC client
+4. Add assistant-specific features
+
+See [OpenCode Integration Guide](docs/OPENCODE_INTEGRATION.md) for complete walkthrough.
+
+### Benefits of Separation
+- **Focused repos** - Core vs integration concerns
+- **Independent versioning** - Update either without touching the other
+- **Multiple integrations** - Each AI assistant can have its own repo
+- **Language agnostic** - IPC works with any language
 
 ## License
 

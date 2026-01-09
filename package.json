@@ -1,0 +1,40 @@
+{
+  "name": "zellij-pane-tracker",
+  "version": "1.0.0",
+  "description": "Zellij plugin + IPC protocol for AI assistant pane integration",
+  "type": "module",
+  "main": "ipc/index.ts",
+  "exports": {
+    ".": "./ipc/index.ts",
+    "./ipc": "./ipc/index.ts",
+    "./api": "./api/index.ts"
+  },
+  "scripts": {
+    "build:plugin": "./build.sh",
+    "ipc:server": "bun run ipc/ipc-server-standalone.ts",
+    "ipc:client": "bun run ipc/ipc-client-cli.ts",
+    "mcp:server": "bun run mcp-server/index.ts"
+  },
+  "keywords": [
+    "zellij",
+    "terminal",
+    "mcp",
+    "ipc",
+    "ai-assistant",
+    "opencode",
+    "canvas"
+  ],
+  "author": "Nakul Tiruviluamala <nakul@theslyprofessor.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/theslyprofessor/zellij-pane-tracker.git"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "bun": "^1.0.0"
+  }
+}
